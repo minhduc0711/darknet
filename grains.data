@@ -1,0 +1,4 @@
+classes= 2
+train  = data/train.txt
+names = grains.names
+backup = backup/
