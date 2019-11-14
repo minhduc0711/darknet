@@ -2,4 +2,4 @@ classes= 2
 train = data/corn_train.txt
 valid = data/corn_test.txt
 names = grains.names
-backup = backup
+backup = saved_weights
