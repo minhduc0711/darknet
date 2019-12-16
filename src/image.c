@@ -336,7 +336,7 @@ void draw_detections_v3(image im, detection *dets, int num, float thresh, char *
     // image output
     qsort(selected_detections, selected_detections_num, sizeof(*selected_detections), compare_by_probs);
     for (i = 0; i < selected_detections_num; ++i) {
-            int width = im.h * .001;
+            int width = im.h * .002;
             if (width < 1)
                 width = 1;
 
