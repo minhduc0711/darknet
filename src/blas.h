@@ -117,8 +117,8 @@ void add_3_arrays_activate(float *a1, float *a2, float *a3, size_t size, ACTIVAT
 void sum_of_mults(float *a1, float *a2, float *b1, float *b2, size_t size, float *dst);
 void activate_and_mult(float *a1, float *a2, size_t size, ACTIVATION a, float *dst);
 
-void scale_channels_gpu(float *in_w_h_c, int size, int channel_size, float *scales_c, float *out);
-void backward_scale_channels_gpu(float *in_w_h_c_delta, int size, int channel_size,
+void scale_channels_gpu(float *in_w_h_c, int size, int channel_size, int batch_size, int scale_wh, float *scales_c, float *out);
+void backward_scale_channels_gpu(float *in_w_h_c_delta, int size, int channel_size, int batch_size, int scale_wh,
     float *in_scales_c, float *out_from_delta,
     float *in_from_output, float *out_state_delta);
 
@@ -128,6 +128,13 @@ void backward_sam_gpu(float *in_w_h_c_delta, int size, int channel_size,
     float *in_from_output, float *out_state_delta);
 
 void sam_gpu(float *in_w_h_c, int size, int channel_size, float *scales_c, float *out);
+
+void smooth_rotate_weights_gpu(const float *src_weight_gpu, float *weight_deform_gpu, int nweights, int n, int size, int angle, int reverse);
+void stretch_weights_gpu(const float *src_weight_gpu, float *weight_deform_gpu, int nweights, int n, int size, float scale, int reverse);
+void sway_and_flip_weights_gpu(const float *src_weight_gpu, float *weight_deform_gpu, int nweights, int n, int size, int angle, int reverse);
+void rotate_weights_gpu(const float *src_weight_gpu, float *weight_deform_gpu, int nweights, int n, int size, int reverse);
+void reduce_and_expand_array_gpu(const float *src_gpu, float *dst_gpu, int size, int groups);
+void expand_array_gpu(const float *src_gpu, float *dst_gpu, int size, int groups);
 
 #endif
 #ifdef __cplusplus
