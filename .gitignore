@@ -10,7 +10,8 @@
 *.lib
 *.dylib
 mnist/
-data/
+data/*
+!data/corn.*
 caffe/
 grasp/
 images/
@@ -18,7 +19,7 @@ opencv/
 convnet/
 decaf/
 submission/
-cfg/
+# cfg/
 build/darknet/*
 build_*/
 !build/darknet/YoloWrapper.cs
