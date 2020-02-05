@@ -10,5 +10,5 @@ def generate_txt_file(data_dir, output_path):
                 f.write(img_path + "\n")
 
 
-generate_txt_file("data/corn_train", "data/corn_train.txt")
-generate_txt_file("data/corn_test", "data/corn_test.txt")
+generate_txt_file("data/train", "data/corn_train.txt")
+generate_txt_file("data/test", "data/corn_test.txt")
