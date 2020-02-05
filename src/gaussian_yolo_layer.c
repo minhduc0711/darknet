@@ -153,8 +153,21 @@ box get_gaussian_yolo_box(float *x, float *biases, int n, int index, int i, int 
     return b;
 }
 
+static inline float fix_nan_inf(float val)
+{
+    if (isnan(val) || isinf(val)) val = 0;
+    return val;
+}
+
+static inline float clip_value(float val, const float max_val)
+{
+    if (val > max_val) val = max_val;
+    else if (val < -max_val) val = -max_val;
+    return val;
+}
+
 float delta_gaussian_yolo_box(box truth, float *x, float *biases, int n, int index, int i, int j, int lw, int lh, int w, int h, float *delta,
-    float scale, int stride, float iou_normalizer, IOU_LOSS iou_loss, float uc_normalizer, int accumulate, YOLO_POINT yolo_point)
+    float scale, int stride, float iou_normalizer, IOU_LOSS iou_loss, float uc_normalizer, int accumulate, YOLO_POINT yolo_point, float max_delta)
 {
     box pred = get_gaussian_yolo_box(x, biases, n, index, i, j, lw, lh, w, h, stride, yolo_point);
 
@@ -297,6 +310,28 @@ float delta_gaussian_yolo_box(box truth, float *x, float *biases, int n, int ind
     delta_uw *= uc_normalizer;
     delta_uh *= uc_normalizer;
 
+    delta_x = fix_nan_inf(delta_x);
+    delta_y = fix_nan_inf(delta_y);
+    delta_w = fix_nan_inf(delta_w);
+    delta_h = fix_nan_inf(delta_h);
+
+    delta_ux = fix_nan_inf(delta_ux);
+    delta_uy = fix_nan_inf(delta_uy);
+    delta_uw = fix_nan_inf(delta_uw);
+    delta_uh = fix_nan_inf(delta_uh);
+
+    if (max_delta != FLT_MAX) {
+        delta_x = clip_value(delta_x, max_delta);
+        delta_y = clip_value(delta_y, max_delta);
+        delta_w = clip_value(delta_w, max_delta);
+        delta_h = clip_value(delta_h, max_delta);
+
+        delta_ux = clip_value(delta_ux, max_delta);
+        delta_uy = clip_value(delta_uy, max_delta);
+        delta_uw = clip_value(delta_uw, max_delta);
+        delta_uh = clip_value(delta_uh, max_delta);
+    }
+
     delta[index + 0 * stride] += delta_x;
     delta[index + 2 * stride] += delta_y;
     delta[index + 4 * stride] += delta_w;
@@ -330,16 +365,18 @@ void averages_gaussian_yolo_deltas(int class_index, int box_index, int stride, i
     }
 }
 
-void delta_gaussian_yolo_class(float *output, float *delta, int index, int class_id, int classes, int stride, float *avg_cat, float label_smooth_eps)
+void delta_gaussian_yolo_class(float *output, float *delta, int index, int class_id, int classes, int stride, float *avg_cat, float label_smooth_eps, float *classes_multipliers)
 {
     int n;
     if (delta[index]){
         delta[index + stride*class_id] = (1 - label_smooth_eps) - output[index + stride*class_id];
+        if (classes_multipliers) delta[index + stride*class_id] *= classes_multipliers[class_id];
         if(avg_cat) *avg_cat += output[index + stride*class_id];
         return;
     }
     for(n = 0; n < classes; ++n){
         delta[index + stride*n] = ((n == class_id) ? (1 - label_smooth_eps) : (0 + label_smooth_eps/classes)) - output[index + stride*n];
+        if (classes_multipliers && n == class_id) delta[index + stride*class_id] *= classes_multipliers[class_id];
         if(n == class_id && avg_cat) *avg_cat += output[index + stride*n];
     }
 }
@@ -452,9 +489,10 @@ void forward_gaussian_yolo_layer(const layer l, network_state state)
                         int class_id = state.truth[best_t*(4 + 1) + b*l.truths + 4];
                         if (l.map) class_id = l.map[class_id];
                         int class_index = entry_gaussian_index(l, b, n*l.w*l.h + j*l.w + i, 9);
-                        delta_gaussian_yolo_class(l.output, l.delta, class_index, class_id, l.classes, l.w*l.h, 0, l.label_smooth_eps);
+                        delta_gaussian_yolo_class(l.output, l.delta, class_index, class_id, l.classes, l.w*l.h, 0, l.label_smooth_eps, l.classes_multipliers);
                         box truth = float_to_box_stride(state.truth + best_t*(4 + 1) + b*l.truths, 1);
-                        delta_gaussian_yolo_box(truth, l.output, l.biases, l.mask[n], box_index, i, j, l.w, l.h, state.net.w, state.net.h, l.delta, (2-truth.w*truth.h), l.w*l.h, l.iou_normalizer, l.iou_loss, l.uc_normalizer, 1, l.yolo_point);
+                        const float class_multiplier = (l.classes_multipliers) ? l.classes_multipliers[class_id] : 1.0f;
+                        delta_gaussian_yolo_box(truth, l.output, l.biases, l.mask[n], box_index, i, j, l.w, l.h, state.net.w, state.net.h, l.delta, (2-truth.w*truth.h), l.w*l.h, l.iou_normalizer * class_multiplier, l.iou_loss, l.uc_normalizer, 1, l.yolo_point, l.max_delta);
                     }
                 }
             }
@@ -494,17 +532,19 @@ void forward_gaussian_yolo_layer(const layer l, network_state state)
 
             int mask_n = int_index(l.mask, best_n, l.n);
             if(mask_n >= 0){
+                int class_id = state.truth[t*(4 + 1) + b*l.truths + 4];
+                if (l.map) class_id = l.map[class_id];
+
                 int box_index = entry_gaussian_index(l, b, mask_n*l.w*l.h + j*l.w + i, 0);
-                float iou = delta_gaussian_yolo_box(truth, l.output, l.biases, best_n, box_index, i, j, l.w, l.h, state.net.w, state.net.h, l.delta, (2-truth.w*truth.h), l.w*l.h, l.iou_normalizer, l.iou_loss, l.uc_normalizer, 1, l.yolo_point);
+                const float class_multiplier = (l.classes_multipliers) ? l.classes_multipliers[class_id] : 1.0f;
+                float iou = delta_gaussian_yolo_box(truth, l.output, l.biases, best_n, box_index, i, j, l.w, l.h, state.net.w, state.net.h, l.delta, (2-truth.w*truth.h), l.w*l.h, l.iou_normalizer * class_multiplier, l.iou_loss, l.uc_normalizer, 1, l.yolo_point, l.max_delta);
 
                 int obj_index = entry_gaussian_index(l, b, mask_n*l.w*l.h + j*l.w + i, 8);
                 avg_obj += l.output[obj_index];
-                l.delta[obj_index] = l.cls_normalizer * (1 - l.output[obj_index]);
+                l.delta[obj_index] = class_multiplier * l.cls_normalizer * (1 - l.output[obj_index]);
 
-                int class_id = state.truth[t*(4 + 1) + b*l.truths + 4];
-                if (l.map) class_id = l.map[class_id];
                 int class_index = entry_gaussian_index(l, b, mask_n*l.w*l.h + j*l.w + i, 9);
-                delta_gaussian_yolo_class(l.output, l.delta, class_index, class_id, l.classes, l.w*l.h, &avg_cat, l.label_smooth_eps);
+                delta_gaussian_yolo_class(l.output, l.delta, class_index, class_id, l.classes, l.w*l.h, &avg_cat, l.label_smooth_eps, l.classes_multipliers);
 
                 ++count;
                 ++class_count;
@@ -525,17 +565,19 @@ void forward_gaussian_yolo_layer(const layer l, network_state state)
                     // iou, n
 
                     if (iou > l.iou_thresh) {
+                        int class_id = state.truth[t*(4 + 1) + b*l.truths + 4];
+                        if (l.map) class_id = l.map[class_id];
+
                         int box_index = entry_gaussian_index(l, b, mask_n*l.w*l.h + j*l.w + i, 0);
-                        float iou = delta_gaussian_yolo_box(truth, l.output, l.biases, n, box_index, i, j, l.w, l.h, state.net.w, state.net.h, l.delta, (2 - truth.w*truth.h), l.w*l.h, l.iou_normalizer, l.iou_loss, l.uc_normalizer, 1, l.yolo_point);
+                        const float class_multiplier = (l.classes_multipliers) ? l.classes_multipliers[class_id] : 1.0f;
+                        float iou = delta_gaussian_yolo_box(truth, l.output, l.biases, n, box_index, i, j, l.w, l.h, state.net.w, state.net.h, l.delta, (2 - truth.w*truth.h), l.w*l.h, l.iou_normalizer * class_multiplier, l.iou_loss, l.uc_normalizer, 1, l.yolo_point, l.max_delta);
 
                         int obj_index = entry_gaussian_index(l, b, mask_n*l.w*l.h + j*l.w + i, 8);
                         avg_obj += l.output[obj_index];
-                        l.delta[obj_index] = l.cls_normalizer * (1 - l.output[obj_index]);
+                        l.delta[obj_index] = class_multiplier * l.cls_normalizer * (1 - l.output[obj_index]);
 
-                        int class_id = state.truth[t*(4 + 1) + b*l.truths + 4];
-                        if (l.map) class_id = l.map[class_id];
                         int class_index = entry_gaussian_index(l, b, mask_n*l.w*l.h + j*l.w + i, 9);
-                        delta_gaussian_yolo_class(l.output, l.delta, class_index, class_id, l.classes, l.w*l.h, &avg_cat, l.label_smooth_eps);
+                        delta_gaussian_yolo_class(l.output, l.delta, class_index, class_id, l.classes, l.w*l.h, &avg_cat, l.label_smooth_eps, l.classes_multipliers);
 
                         ++count;
                         ++class_count;
