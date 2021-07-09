@@ -19,9 +19,13 @@ opencv/
 convnet/
 decaf/
 submission/
-# cfg/
+cfg/
+temp/
 build/darknet/*
 build_*/
+ninja/
+ninja.zip
+vcpkg_installed/
 !build/darknet/YoloWrapper.cs
 .fuse*
 *.weights
@@ -34,6 +38,8 @@ build/detect_cuda_compute_capabilities.cu
 build/.ninja_deps
 build/.ninja_log
 build/Makefile
+*/vcpkg-manifest-install.log
+build.log
 
 # OS Generated #
 .DS_Store*
@@ -56,5 +62,4 @@ include/darknet/
 uselib
 uselib_track
 darknet
-
-predictions.jpg
+vcpkg/
